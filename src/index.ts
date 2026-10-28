@@ -4,7 +4,7 @@ import { lookup } from "@oh-my-pi/pi-coding-agent/config/registry";
 import { findScopedSettings, type Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { collapseSharedUsageReports } from "@oh-my-pi/pi-tui/overlays/usage-display";
 import { sanitizeText } from "@oh-my-pi/pi-utils";
-import { formatUsageReports } from "./usage-summary";
+import { DEFAULT_DISPLAY, formatUsageReports } from "./usage-summary";
 
 const STATUS_KEY = "usage-statusbar";
 const REFRESH_MS = 60_000;
@@ -74,6 +74,7 @@ export default function (pi: ExtensionAPI) {
 				collapseSharedUsageReports(reports ?? []),
 				resolveUsedFraction,
 				sanitizeText,
+				DEFAULT_DISPLAY,
 			);
 			setStatuses(ctx, rows.length ? rows : "Usage: no quota data");
 		} catch {

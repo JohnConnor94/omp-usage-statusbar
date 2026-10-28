@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { resolveUsedFraction, type UsageLimit, type UsageReport } from "@oh-my-pi/pi-ai";
 import { sanitizeText } from "@oh-my-pi/pi-utils";
-import { formatUsageReports } from "./usage-summary";
+import { DEFAULT_DISPLAY, formatUsageReports, listUsageSubscriptions } from "./usage-summary";
 
 function limit(
 	provider: UsageLimit["scope"]["provider"],
@@ -22,23 +22,27 @@ function report(
 	return { provider, fetchedAt: 0, metadata, limits };
 }
 
+function mixedReports(): UsageReport[] {
+	return [
+		report("openai-codex", { email: "same@example.com", orgId: "org-z", planType: "Plus" }, [
+			limit("openai-codex", "daily", "5 Hour", { unit: "tokens", usedFraction: 0.504 }, { id: "5h", label: "5 Hour" }, "5h"),
+		]),
+		report("anthropic", { email: "a\u0000@example.com", orgName: "Team\nOne" }, [
+			limit("anthropic", "daily", "Quota", { unit: "percent", used: 33.3 }, { id: "5h", label: "5 Hour" }, "5h"),
+			limit("anthropic", "weekly", "Quota", { unit: "percent", used: 33.3 }, { id: "7d", label: "7 Day" }, "7d"),
+		]),
+		report("openai-codex", { email: "same@example.com", accountId: "acct-a", planType: "Team" }, [
+			limit("openai-codex", "weekly", "Weekly", { unit: "tokens", remainingFraction: 0.25 }),
+		]),
+		report("openai-codex", { email: "same@example.com" }, [
+			limit("openai-codex", "hourly", "Hourly", { unit: "tokens", usedFraction: 0.1 }),
+		]),
+	];
+}
+
 describe("formatUsageReports", () => {
 	test("renders sorted provider, account, and window entries with compact labels", () => {
-		const reports = [
-			report("openai-codex", { email: "same@example.com", orgId: "org-z", planType: "Plus" }, [
-				limit("openai-codex", "daily", "5 Hour", { unit: "tokens", usedFraction: 0.504 }, { id: "5h", label: "5 Hour" }, "5h"),
-			]),
-			report("anthropic", { email: "a\u0000@example.com", orgName: "Team\nOne" }, [
-				limit("anthropic", "daily", "Quota", { unit: "percent", used: 33.3 }, { id: "5h", label: "5 Hour" }, "5h"),
-				limit("anthropic", "weekly", "Quota", { unit: "percent", used: 33.3 }, { id: "7d", label: "7 Day" }, "7d"),
-			]),
-			report("openai-codex", { email: "same@example.com", accountId: "acct-a", planType: "Team" }, [
-				limit("openai-codex", "weekly", "Weekly", { unit: "tokens", remainingFraction: 0.25 }),
-			]),
-			report("openai-codex", { email: "same@example.com" }, [
-				limit("openai-codex", "hourly", "Hourly", { unit: "tokens", usedFraction: 0.1 }),
-			]),
-		];
+		const reports = mixedReports();
 		const expected = [
 			"anthropic/a@example.com (Team One) Quota 5 Hour 67% · Quota 7 Day 67%",
 			"openai-codex/same@example.com (#4) Hourly 90%",
@@ -46,12 +50,49 @@ describe("formatUsageReports", () => {
 			"openai-codex/same@example.com (org-z, Plus) 5 Hour 50%",
 		];
 
-		expect(formatUsageReports(reports, resolveUsedFraction, sanitizeText)).toEqual(expected);
-		expect(formatUsageReports([...reports.slice(0, 3)].reverse(), resolveUsedFraction, sanitizeText)).toEqual([
+		expect(formatUsageReports(reports, resolveUsedFraction, sanitizeText, DEFAULT_DISPLAY)).toEqual(expected);
+		expect(formatUsageReports([...reports.slice(0, 3)].reverse(), resolveUsedFraction, sanitizeText, DEFAULT_DISPLAY)).toEqual([
 			"anthropic/a@example.com (Team One) Quota 5 Hour 67% · Quota 7 Day 67%",
 			"openai-codex/same@example.com (acct-a, Team) Weekly 25%",
 			"openai-codex/same@example.com (org-z, Plus) 5 Hour 50%",
 		]);
+	});
+
+	test("provider and none label modes drop the account part", () => {
+		const anthropic = mixedReports().slice(1, 2);
+		expect(formatUsageReports(anthropic, resolveUsedFraction, sanitizeText, { ...DEFAULT_DISPLAY, label: "provider" })).toEqual([
+			"anthropic Quota 5 Hour 67% · Quota 7 Day 67%",
+		]);
+		expect(formatUsageReports(anthropic, resolveUsedFraction, sanitizeText, { ...DEFAULT_DISPLAY, label: "none" })).toEqual([
+			"Quota 5 Hour 67% · Quota 7 Day 67%",
+		]);
+	});
+
+	test("hidden removes exactly the matching subscription", () => {
+		const hidden = new Set(["openai-codex/same@example.com (acct-a, Team)"]);
+		expect(formatUsageReports(mixedReports(), resolveUsedFraction, sanitizeText, { label: "full", hidden })).toEqual([
+			"anthropic/a@example.com (Team One) Quota 5 Hour 67% · Quota 7 Day 67%",
+			"openai-codex/same@example.com (#4) Hourly 90%",
+			"openai-codex/same@example.com (org-z, Plus) 5 Hour 50%",
+		]);
+	});
+
+	test("listUsageSubscriptions keys match full-mode rows order", () => {
+		const reports = [
+			report("openai-codex", { email: "same@example.com", accountId: "acct-a", planType: "Team" }, [
+				limit("openai-codex", "weekly", "Weekly", { unit: "tokens", remainingFraction: 0.25 }),
+			]),
+			report("anthropic", { email: "a\u0000@example.com", orgName: "Team\nOne" }, [
+				limit("anthropic", "daily", "Quota", { unit: "percent", used: 33.3 }, { id: "5h", label: "5 Hour" }, "5h"),
+			]),
+		];
+		const subscriptions = listUsageSubscriptions(reports, resolveUsedFraction, sanitizeText);
+		const rows = formatUsageReports(reports, resolveUsedFraction, sanitizeText, DEFAULT_DISPLAY);
+		expect(subscriptions.map(s => s.key)).toEqual([
+			"anthropic/a@example.com (Team One)",
+			"openai-codex/same@example.com (Team)",
+		]);
+		subscriptions.forEach((s, i) => expect(rows[i]).toBe(`${s.key} ${s.windows.join(" · ")}`));
 	});
 
 	test("clamps over-limit and negative usage, and skips unresolved or non-finite amounts", () => {
@@ -63,7 +104,7 @@ describe("formatUsageReports", () => {
 			limit("anthropic", "missing", "Missing", { unit: "tokens" }),
 		]);
 
-		expect(formatUsageReports([quotas], resolveUsedFraction, sanitizeText)).toEqual([
+		expect(formatUsageReports([quotas], resolveUsedFraction, sanitizeText, DEFAULT_DISPLAY)).toEqual([
 			"anthropic/acct Negative 100% · Over 0%",
 		]);
 	});
@@ -86,7 +127,7 @@ describe("formatUsageReports", () => {
 				limit("google-antigravity", "unknown-account", "Weekly", { unit: "percent", used: 30 }),
 			]),
 		];
-		const rows = formatUsageReports(reports, resolveUsedFraction, sanitizeText);
+		const rows = formatUsageReports(reports, resolveUsedFraction, sanitizeText, DEFAULT_DISPLAY);
 
 		expect(rows).toContain("anthropic/scope-account 5h 50%");
 		expect(rows).toContain("google-antigravity/account 4 Weekly 70%");
@@ -96,9 +137,9 @@ describe("formatUsageReports", () => {
 	});
 
 	test("returns empty text for empty reports or reports without resolved quota", () => {
-		expect(formatUsageReports([], resolveUsedFraction, sanitizeText)).toEqual([]);
+		expect(formatUsageReports([], resolveUsedFraction, sanitizeText, DEFAULT_DISPLAY)).toEqual([]);
 		expect(
-			formatUsageReports([report("anthropic", {}, [limit("anthropic", "unknown", "Unknown", { unit: "unknown" })])], resolveUsedFraction, sanitizeText),
+			formatUsageReports([report("anthropic", {}, [limit("anthropic", "unknown", "Unknown", { unit: "unknown" })])], resolveUsedFraction, sanitizeText, DEFAULT_DISPLAY),
 		).toEqual([]);
 	});
 });

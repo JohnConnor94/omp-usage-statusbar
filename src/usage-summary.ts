@@ -37,16 +37,31 @@ function windowLabel(limit: UsageLimit): string {
 	return label;
 }
 
+/** Sanitize `text` and collapse whitespace runs into single spaces. */
+function clean(text: string, sanitizeText: (text: string) => string): string {
+	return sanitizeText(text).replace(/\s+/g, " ").trim();
+}
+
+/** One provider account (one report) with its formatted quota windows. */
+export interface UsageSubscription {
+	/** Stable identity `<provider>/<account>`, sanitized; used to hide a subscription. */
+	key: string;
+	provider: string;
+	account: string;
+	/** Formatted `<window> <remaining>%` strings, sorted by window label. */
+	windows: string[];
+}
+
 /**
- * Format one status row per account, grouping that account's quota windows.
- * Rows are `<provider>/<account> <window> <remaining>% · …`, sorted by provider, account, then window.
- * Limits whose used fraction is unresolved or non-finite are skipped; reports left with no limit yield no row.
+ * List one subscription per report, grouping that account's quota windows.
+ * Sorted by provider, account, then report index. Limits whose used fraction is unresolved or non-finite
+ * are skipped; reports left with no limit yield no subscription.
  */
-export function formatUsageReports(
+export function listUsageSubscriptions(
 	reports: readonly UsageReport[],
 	resolveUsedFraction: (limit: UsageLimit) => number | undefined,
 	sanitizeText: (text: string) => string,
-): string[] {
+): UsageSubscription[] {
 	const codexEmails = new Map<string, number>();
 	for (const report of reports) {
 		const email = report.provider === "openai-codex" ? str(report.metadata?.email) : undefined;
@@ -79,12 +94,54 @@ export function formatUsageReports(
 			cmp(a.window, b.window),
 	);
 
-	const rows: { reportIndex: number; text: string }[] = [];
+	const subscriptions: (UsageSubscription & { reportIndex: number })[] = [];
 	for (const entry of entries) {
 		const window = `${entry.window} ${entry.remaining}%`;
-		const previous = rows[rows.length - 1];
-		if (previous?.reportIndex === entry.reportIndex) previous.text += ` · ${window}`;
-		else rows.push({ reportIndex: entry.reportIndex, text: `${entry.provider}/${entry.account} ${window}` });
+		const previous = subscriptions[subscriptions.length - 1];
+		if (previous?.reportIndex === entry.reportIndex) previous.windows.push(window);
+		else {
+			subscriptions.push({
+				reportIndex: entry.reportIndex,
+				key: clean(`${entry.provider}/${entry.account}`, sanitizeText),
+				provider: entry.provider,
+				account: entry.account,
+				windows: [window],
+			});
+		}
 	}
-	return rows.map(({ text }) => sanitizeText(text).replace(/\s+/g, " ").trim());
+	return subscriptions.map(({ reportIndex: _reportIndex, ...subscription }) => subscription);
+}
+
+/** How a row names its account: `full` = `<provider>/<account>`, `provider` = provider only, `none` = windows only. */
+export type UsageLabelMode = "full" | "provider" | "none";
+
+/** Display options for `formatUsageReports`. */
+export interface UsageDisplayOptions {
+	label: UsageLabelMode;
+	/** `UsageSubscription.key`s to leave out. */
+	hidden: ReadonlySet<string>;
+}
+
+/** Default display: full labels, nothing hidden. */
+export const DEFAULT_DISPLAY: UsageDisplayOptions = { label: "full", hidden: new Set() };
+
+/**
+ * Format one status row per visible subscription, in `listUsageSubscriptions` order.
+ * Subscriptions whose key is in `display.hidden` are dropped. In `provider` mode two accounts of the
+ * same provider give two rows that start with the same provider name.
+ */
+export function formatUsageReports(
+	reports: readonly UsageReport[],
+	resolveUsedFraction: (limit: UsageLimit) => number | undefined,
+	sanitizeText: (text: string) => string,
+	display: UsageDisplayOptions,
+): string[] {
+	return listUsageSubscriptions(reports, resolveUsedFraction, sanitizeText)
+		.filter(s => !display.hidden.has(s.key))
+		.map(s => {
+			const windows = s.windows.join(" · ");
+			const prefix =
+				display.label === "full" ? `${s.provider}/${s.account} ` : display.label === "provider" ? `${s.provider} ` : "";
+			return clean(prefix + windows, sanitizeText);
+		});
 }
