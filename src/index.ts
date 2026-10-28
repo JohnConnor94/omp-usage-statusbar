@@ -20,6 +20,7 @@ export default function (pi: ExtensionAPI) {
 	let inflight: AbortController | undefined;
 	let stopped = true;
 	let statusCount = 0;
+	let hasRows = false;
 
 	function setStatuses(ctx: ExtensionContext, value: string | readonly string[] | undefined): void {
 		const rows = typeof value === "string" || value === undefined ? [] : value;
@@ -28,6 +29,7 @@ export default function (pi: ExtensionAPI) {
 			ctx.ui.setStatus(statusRowKey(index), rows[index]);
 		}
 		statusCount = rows.length;
+		hasRows = rows.length > 0;
 	}
 
 	// Timer callbacks run outside active settings scope; keep each refresh bound to its session settings.
@@ -46,7 +48,7 @@ export default function (pi: ExtensionAPI) {
 		inflight = controller;
 		try {
 			const usage = ctx.modelRegistry.authStorage.usage;
-			const reports = await usage.reports({
+			const reports = await usage.reports?.({
 				baseUrlResolver: provider => {
 					if (provider === "google-antigravity") {
 						const mode = antigravityMode(settings);
@@ -65,7 +67,8 @@ export default function (pi: ExtensionAPI) {
 			);
 			setStatuses(ctx, rows.length ? rows : "Usage: no quota data");
 		} catch {
-			if (!stopped && !controller.signal.aborted) setStatuses(ctx, "Usage: unavailable");
+			// Keep the last good rows through a transient failure.
+			if (!stopped && !controller.signal.aborted && !hasRows) setStatuses(ctx, "Usage: unavailable");
 		} finally {
 			if (inflight === controller) inflight = undefined;
 		}
