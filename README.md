@@ -42,6 +42,26 @@ Messaggi di stato:
 - `Usage: no quota data`: nessun abbonamento con dati di quota.
 - `Usage: unavailable`: il recupero è fallito prima di avere dati. Se fallisce dopo, restano le ultime righe valide.
 
+## Configurazione
+
+Le impostazioni si leggono da due file JSON, da modificare a mano (nessun comando di configurazione ancora):
+
+- globale: `~/.omp/agent/usage-statusbar.json`, valori predefiniti per tutti i progetti;
+- progetto: `<progetto>/.omp/usage-statusbar.json`, sovrascrive il globale.
+
+```json
+{ "enabled": true, "label": "provider", "hidden": ["github-copilot/octocat"] }
+```
+
+- `enabled`: `true` mostra le righe, `false` le nasconde.
+- `label`: nome dell'account nella riga.
+  - `full` (predefinito): `anthropic/user@example.com (Org) Claude 5 Hour 69% · Claude 7 Day 73%`
+  - `provider`: `anthropic Claude 5 Hour 69% · Claude 7 Day 73%`
+  - `none`: `Claude 5 Hour 69% · Claude 7 Day 73%` (solo le finestre).
+- `hidden`: abbonamenti da nascondere, identificati dalla parte `<provider>/<account>` della modalità `full`.
+
+Precedenza per chiave: predefiniti < globale < progetto. `hidden` del progetto sostituisce l'intera lista globale, non la unisce. Un file illegibile o non valido viene ignorato con un avviso. Le modifiche si applicano al riavvio di OMP.
+
 ## Disinstallazione
 
 L'estensione è caricata solo con `omp --extension ./`: smetti di passare `--extension ./`.

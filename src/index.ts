@@ -1,10 +1,17 @@
-import { resolveUsedFraction } from "@oh-my-pi/pi-ai";
+import { resolveUsedFraction, type UsageReport } from "@oh-my-pi/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { lookup } from "@oh-my-pi/pi-coding-agent/config/registry";
 import { findScopedSettings, type Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { collapseSharedUsageReports } from "@oh-my-pi/pi-tui/overlays/usage-display";
 import { sanitizeText } from "@oh-my-pi/pi-utils";
-import { DEFAULT_DISPLAY, formatUsageReports } from "./usage-summary";
+import {
+	type EffectiveConfig,
+	globalConfigPath,
+	mergeConfig,
+	projectConfigPath,
+	readConfigFile,
+} from "./config";
+import { formatUsageReports, listUsageSubscriptions } from "./usage-summary";
 
 const STATUS_KEY = "usage-statusbar";
 const REFRESH_MS = 60_000;
@@ -18,8 +25,9 @@ function statusRowKey(index: number): string {
 
 /**
  * Footer usage extension (TUI main agent only).
- * - `session_start`: show "Usage: loading", fetch reports, start the 60 s refresh timer.
- * - `turn_end`: refresh again after each turn.
+ * - `session_start`: load global + project config; if enabled, show "Usage: loading", fetch reports,
+ *   start the 60 s refresh timer.
+ * - `turn_end`: refresh again after each turn (when enabled).
  * - `session_shutdown`: abort any in-flight fetch, stop the timer, clear every footer row.
  */
 export default function (pi: ExtensionAPI) {
@@ -28,6 +36,8 @@ export default function (pi: ExtensionAPI) {
 	let stopped = true;
 	let statusCount = 0;
 	let hasRows = false;
+	let lastReports: UsageReport[] | undefined;
+	let config: EffectiveConfig = mergeConfig({}, {});
 
 	/** Set the footer: a string fills the single `STATUS_KEY` line, an array fills one keyed row each, `undefined` clears all. */
 	function setStatuses(ctx: ExtensionContext, value: string | readonly string[] | undefined): void {
@@ -51,6 +61,28 @@ export default function (pi: ExtensionAPI) {
 		}
 	}
 
+	/** Reload global + project config files into `config`; warn once per invalid file. */
+	async function loadConfig(ctx: ExtensionContext): Promise<void> {
+		const [global, project] = await Promise.all([
+			readConfigFile(globalConfigPath()),
+			readConfigFile(projectConfigPath(ctx.cwd)),
+		]);
+		config = mergeConfig(global.config, project.config);
+		for (const { error } of [global, project]) if (error) ctx.ui.notify(error, "warning");
+	}
+
+	/** Redraw the footer from `lastReports` and `config`; no-op before the first successful fetch. */
+	function render(ctx: ExtensionContext): void {
+		if (!lastReports) return;
+		if (listUsageSubscriptions(lastReports, resolveUsedFraction, sanitizeText).length === 0) {
+			setStatuses(ctx, "Usage: no quota data");
+			return;
+		}
+		// Every subscription hidden gives [] and clears all rows.
+		const display = { label: config.label, hidden: new Set(config.hidden) };
+		setStatuses(ctx, formatUsageReports(lastReports, resolveUsedFraction, sanitizeText, display));
+	}
+
 	/** Fetch usage reports and update the footer; no-op while a fetch is in flight. */
 	async function refresh(ctx: ExtensionContext, settings: Settings | undefined): Promise<void> {
 		if (inflight) return;
@@ -70,13 +102,8 @@ export default function (pi: ExtensionAPI) {
 				signal: controller.signal,
 			});
 			if (stopped || controller.signal.aborted) return;
-			const rows = formatUsageReports(
-				collapseSharedUsageReports(reports ?? []),
-				resolveUsedFraction,
-				sanitizeText,
-				DEFAULT_DISPLAY,
-			);
-			setStatuses(ctx, rows.length ? rows : "Usage: no quota data");
+			lastReports = collapseSharedUsageReports(reports ?? []);
+			render(ctx);
 		} catch {
 			// Keep the last good rows through a transient failure.
 			if (!stopped && !controller.signal.aborted && !hasRows) setStatuses(ctx, "Usage: unavailable");
@@ -85,27 +112,38 @@ export default function (pi: ExtensionAPI) {
 		}
 	}
 
-	pi.on("session_start", (_event, ctx) => {
-		if (ctx.mode !== "tui" || ctx.agent.kind !== "main") return;
-		const settings = findScopedSettings();
+	/** Begin (or restart) the footer: show "Usage: loading", fetch now, then every `REFRESH_MS`. */
+	function start(ctx: ExtensionContext, settings: Settings | undefined): void {
 		if (timer) ctx.clearTimer(timer);
 		stopped = false;
 		setStatuses(ctx, "Usage: loading");
 		void refresh(ctx, settings);
 		timer = ctx.setInterval(() => void refresh(ctx, settings), REFRESH_MS);
-	});
+	}
 
-	pi.on("turn_end", (_event, ctx) => {
-		if (stopped || ctx.mode !== "tui" || ctx.agent.kind !== "main") return;
-		void refresh(ctx, findScopedSettings());
-	});
-
-	pi.on("session_shutdown", (_event, ctx) => {
+	/** Abort any in-flight fetch, stop the timer, clear every footer row and forget the last reports. */
+	function stop(ctx: ExtensionContext): void {
 		stopped = true;
 		inflight?.abort();
 		inflight = undefined;
 		if (timer) ctx.clearTimer(timer);
 		timer = undefined;
 		setStatuses(ctx, undefined);
+		lastReports = undefined;
+	}
+
+	pi.on("session_start", async (_event, ctx) => {
+		if (ctx.mode !== "tui" || ctx.agent.kind !== "main") return;
+		const settings = findScopedSettings(); // read before any await: scope is lost after it
+		await loadConfig(ctx);
+		if (config.enabled) start(ctx, settings);
+		else setStatuses(ctx, undefined);
 	});
+
+	pi.on("turn_end", (_event, ctx) => {
+		if (stopped || !config.enabled || ctx.mode !== "tui" || ctx.agent.kind !== "main") return;
+		void refresh(ctx, findScopedSettings());
+	});
+
+	pi.on("session_shutdown", (_event, ctx) => stop(ctx));
 }
