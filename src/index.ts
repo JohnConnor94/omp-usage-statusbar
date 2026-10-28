@@ -1,17 +1,21 @@
 import { resolveUsedFraction, type UsageReport } from "@oh-my-pi/pi-ai";
-import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { lookup } from "@oh-my-pi/pi-coding-agent/config/registry";
 import { findScopedSettings, type Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { collapseSharedUsageReports } from "@oh-my-pi/pi-tui/overlays/usage-display";
 import { sanitizeText } from "@oh-my-pi/pi-utils";
 import {
+	type ConfigScope,
+	clearConfigFile,
 	type EffectiveConfig,
 	globalConfigPath,
 	mergeConfig,
 	projectConfigPath,
 	readConfigFile,
+	type UsageStatusbarConfig,
+	updateConfigFile,
 } from "./config";
-import { formatUsageReports, listUsageSubscriptions } from "./usage-summary";
+import { formatUsageReports, listUsageSubscriptions, type UsageLabelMode } from "./usage-summary";
 
 const STATUS_KEY = "usage-statusbar";
 const REFRESH_MS = 60_000;
@@ -29,6 +33,8 @@ function statusRowKey(index: number): string {
  *   start the 60 s refresh timer.
  * - `turn_end`: refresh again after each turn (when enabled).
  * - `session_shutdown`: abort any in-flight fetch, stop the timer, clear every footer row.
+ * - `/usage-statusbar` (TUI only): edit the global or project config (on/off, label mode, hidden
+ *   subscriptions) and apply it live.
  */
 export default function (pi: ExtensionAPI) {
 	let timer: Timer | undefined;
@@ -38,6 +44,7 @@ export default function (pi: ExtensionAPI) {
 	let hasRows = false;
 	let lastReports: UsageReport[] | undefined;
 	let config: EffectiveConfig = mergeConfig({}, {});
+	let activeSettings: Settings | undefined;
 
 	/** Set the footer: a string fills the single `STATUS_KEY` line, an array fills one keyed row each, `undefined` clears all. */
 	function setStatuses(ctx: ExtensionContext, value: string | readonly string[] | undefined): void {
@@ -134,9 +141,9 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_start", async (_event, ctx) => {
 		if (ctx.mode !== "tui" || ctx.agent.kind !== "main") return;
-		const settings = findScopedSettings(); // read before any await: scope is lost after it
+		activeSettings = findScopedSettings(); // read before any await: scope is lost after it
 		await loadConfig(ctx);
-		if (config.enabled) start(ctx, settings);
+		if (config.enabled) start(ctx, activeSettings);
 		else setStatuses(ctx, undefined);
 	});
 
@@ -146,4 +153,116 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", (_event, ctx) => stop(ctx));
+
+	/** Reload config after a change, then start, stop or redraw the footer to match; no new fetch unless starting. */
+	async function reload(ctx: ExtensionContext): Promise<void> {
+		await loadConfig(ctx);
+		if (config.enabled && stopped) start(ctx, activeSettings ?? findScopedSettings());
+		else if (!config.enabled && !stopped) stop(ctx);
+		else render(ctx);
+	}
+
+	/** Merge `patch` into the scope's file, then apply it live. */
+	async function applyPatch(ctx: ExtensionContext, scope: ConfigScope, patch: UsageStatusbarConfig): Promise<void> {
+		await updateConfigFile(scope === "global" ? globalConfigPath() : projectConfigPath(ctx.cwd), patch);
+		await reload(ctx);
+	}
+
+	/** Account label choices for the `Account label` submenu. */
+	const LABEL_CHOICES = new Map<string, UsageLabelMode>([
+		["Full — anthropic/user@example.com (Org)", "full"],
+		["Provider only — anthropic", "provider"],
+		["None — windows only", "none"],
+	]);
+
+	/** The scope's own file content plus the effective values seen from that scope (global: defaults + global). */
+	async function readScope(ctx: ExtensionContext, scope: ConfigScope) {
+		const [global, project] = await Promise.all([
+			readConfigFile(globalConfigPath()),
+			readConfigFile(projectConfigPath(ctx.cwd)),
+		]);
+		return {
+			own: scope === "global" ? global.config : project.config,
+			view: mergeConfig(global.config, scope === "global" ? {} : project.config),
+		};
+	}
+
+	/** Show `items` plus `Done` and run the chosen action. Returns false on `Done` or Esc. */
+	async function pick(ctx: ExtensionContext, title: string, items: Map<string, () => Promise<void>>): Promise<boolean> {
+		const picked = await ctx.ui.select(title, [...items.keys(), "Done"]);
+		const action = picked === undefined ? undefined : items.get(picked);
+		if (!action) return false;
+		await action();
+		return true;
+	}
+
+	/**
+	 * Toggle which subscriptions are visible. Lists reported subscriptions plus hidden keys that no longer
+	 * appear in the reports; every toggle writes the whole resulting `hidden` list to the scope file.
+	 */
+	async function subscriptionsMenu(ctx: ExtensionContext, scope: ConfigScope): Promise<void> {
+		for (;;) {
+			const { view } = await readScope(ctx, scope);
+			const reported = listUsageSubscriptions(lastReports ?? [], resolveUsedFraction, sanitizeText).map(s => s.key);
+			const keys = [...reported, ...view.hidden.filter(key => !reported.includes(key))];
+			if (keys.length === 0) {
+				ctx.ui.notify("No subscriptions loaded yet; wait for the first refresh", "info");
+				return;
+			}
+			const items = new Map<string, () => Promise<void>>();
+			for (const key of keys) {
+				const hidden = view.hidden.includes(key);
+				const note = reported.includes(key) ? "" : " (not reported)";
+				items.set(`${hidden ? "[ ]" : "[x]"} ${key}${note}`, () =>
+					applyPatch(ctx, scope, { hidden: hidden ? view.hidden.filter(k => k !== key) : [...view.hidden, key] }),
+				);
+			}
+			if (!(await pick(ctx, "Subscriptions (select to toggle)", items))) return;
+		}
+	}
+
+	/** Main menu of one scope; loops until Done or Esc. Each pass re-reads the files so labels stay current. */
+	async function scopeMenu(ctx: ExtensionCommandContext, scope: ConfigScope): Promise<void> {
+		for (;;) {
+			const { own, view } = await readScope(ctx, scope);
+			const inherited = (key: keyof UsageStatusbarConfig) =>
+				scope === "project" && own[key] === undefined ? " (inherited)" : "";
+
+			const items = new Map<string, () => Promise<void>>();
+			items.set(`Enabled: ${view.enabled ? "on" : "off"}${inherited("enabled")}`, () =>
+				applyPatch(ctx, scope, { enabled: !view.enabled }),
+			);
+			items.set(`Account label: ${view.label}${inherited("label")}`, async () => {
+				const picked = await ctx.ui.select("Account label", [...LABEL_CHOICES.keys()]);
+				const label = picked === undefined ? undefined : LABEL_CHOICES.get(picked);
+				if (label) await applyPatch(ctx, scope, { label });
+			});
+			items.set("Subscriptions…", () => subscriptionsMenu(ctx, scope));
+			if (scope === "project") {
+				items.set("Reset project overrides", async () => {
+					await clearConfigFile(projectConfigPath(ctx.cwd));
+					await reload(ctx);
+				});
+			}
+
+			if (!(await pick(ctx, `Usage status bar — ${scope === "global" ? "Global" : "Project"}`, items))) return;
+		}
+	}
+
+	pi.registerCommand("usage-statusbar", {
+		description: "Configure the usage status bar (subscriptions, label, on/off)",
+		handler: async (_args, ctx) => {
+			if (ctx.mode !== "tui") {
+				ctx.ui.notify("usage-statusbar settings need the interactive TUI", "warning");
+				return;
+			}
+			const scopes = new Map<string, ConfigScope>([
+				["Global (default for all projects)", "global"],
+				[`Project (overrides global in ${ctx.cwd})`, "project"],
+			]);
+			const picked = await ctx.ui.select("Usage status bar — scope", [...scopes.keys()]);
+			const scope = picked === undefined ? undefined : scopes.get(picked);
+			if (scope) await scopeMenu(ctx, scope);
+		},
+	});
 }

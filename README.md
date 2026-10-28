@@ -44,7 +44,7 @@ Messaggi di stato:
 
 ## Configurazione
 
-Le impostazioni si leggono da due file JSON, da modificare a mano (nessun comando di configurazione ancora):
+Le impostazioni si leggono da due file JSON, scritti dal comando `/usage-statusbar` o modificabili a mano:
 
 - globale: `~/.omp/agent/usage-statusbar.json`, valori predefiniti per tutti i progetti;
 - progetto: `<progetto>/.omp/usage-statusbar.json`, sovrascrive il globale.
@@ -60,7 +60,25 @@ Le impostazioni si leggono da due file JSON, da modificare a mano (nessun comand
   - `none`: `Claude 5 Hour 69% · Claude 7 Day 73%` (solo le finestre).
 - `hidden`: abbonamenti da nascondere, identificati dalla parte `<provider>/<account>` della modalità `full`.
 
-Precedenza per chiave: predefiniti < globale < progetto. `hidden` del progetto sostituisce l'intera lista globale, non la unisce. Un file illegibile o non valido viene ignorato con un avviso. Le modifiche si applicano al riavvio di OMP.
+Precedenza per chiave: predefiniti < globale < progetto. `hidden` del progetto sostituisce l'intera lista globale, non la unisce. Un file illegibile o non valido viene ignorato con un avviso. Le modifiche ai file fatte a mano si applicano al riavvio di OMP.
+
+### Comando `/usage-statusbar`
+
+Modifica i file senza toccarli a mano e applica subito il cambiamento al footer (rilegge i dati già caricati, senza nuovo fetch, salvo riattivazione). Esc torna indietro.
+
+1. Scegli lo scope: `Global` (default per tutti i progetti) o `Project` (sovrascrive il globale nella cartella corrente).
+2. Nel menu:
+   - `Enabled: on|off`: attiva o disattiva le righe.
+   - `Account label`: `Full`, `Provider only` o `None — windows only`. Nello scope `Project` i valori non scritti nel file di progetto sono marcati `(inherited)`.
+   - `Subscriptions…`: sceglie gli abbonamenti visibili (vedi sotto).
+   - `Reset project overrides` (solo `Project`): cancella `<progetto>/.omp/usage-statusbar.json`.
+   - `Done`: esce.
+
+Il menu `Subscriptions…` elenca gli abbonamenti caricati: `[x]` visibile, `[ ]` nascosto; selezionane uno per invertirlo. Le chiavi nascoste che non compaiono più nei report restano in lista con `(not reported)`. Ogni modifica scrive l'intera lista `hidden` nel file dello scope, quindi in `Project` salva una copia completa della lista effettiva. Se non ci sono ancora dati, il menu avvisa di attendere il primo aggiornamento.
+
+## Attivare e disattivare
+
+Dal vivo, senza riavviare: `/usage-statusbar` → scope → `Enabled`. Con `off` le righe spariscono e i fetch si fermano; con `on` compare `Usage: loading` e poi le righe. Il valore `enabled` è salvato nel file dello scope scelto.
 
 ## Disinstallazione
 
