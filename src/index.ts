@@ -11,10 +11,17 @@ const REFRESH_MS = 60_000;
 const SANDBOX_URL = "https://daily-cloudcode-pa.sandbox.googleapis.com";
 const PRODUCTION_URL = "https://daily-cloudcode-pa.googleapis.com";
 
+/** Status key of the `index`th usage row; zero-padded so rows keep their order in the footer. */
 function statusRowKey(index: number): string {
 	return `usage-statusbar:${String(index).padStart(6, "0")}`;
 }
 
+/**
+ * Footer usage extension (TUI main agent only).
+ * - `session_start`: show "Usage: loading", fetch reports, start the 60 s refresh timer.
+ * - `turn_end`: refresh again after each turn.
+ * - `session_shutdown`: abort any in-flight fetch, stop the timer, clear every footer row.
+ */
 export default function (pi: ExtensionAPI) {
 	let timer: Timer | undefined;
 	let inflight: AbortController | undefined;
@@ -22,6 +29,7 @@ export default function (pi: ExtensionAPI) {
 	let statusCount = 0;
 	let hasRows = false;
 
+	/** Set the footer: a string fills the single `STATUS_KEY` line, an array fills one keyed row each, `undefined` clears all. */
 	function setStatuses(ctx: ExtensionContext, value: string | readonly string[] | undefined): void {
 		const rows = typeof value === "string" || value === undefined ? [] : value;
 		ctx.ui.setStatus(STATUS_KEY, typeof value === "string" ? value : undefined);
@@ -32,6 +40,7 @@ export default function (pi: ExtensionAPI) {
 		hasRows = rows.length > 0;
 	}
 
+	/** Read the antigravity endpoint mode from the given settings; "auto" when unavailable. */
 	// Timer callbacks run outside active settings scope; keep each refresh bound to its session settings.
 	function antigravityMode(settings: Settings | undefined): unknown {
 		if (!settings) return "auto";
@@ -42,6 +51,7 @@ export default function (pi: ExtensionAPI) {
 		}
 	}
 
+	/** Fetch usage reports and update the footer; no-op while a fetch is in flight. */
 	async function refresh(ctx: ExtensionContext, settings: Settings | undefined): Promise<void> {
 		if (inflight) return;
 		const controller = new AbortController();

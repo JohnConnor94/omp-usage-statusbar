@@ -37,7 +37,11 @@ function windowLabel(limit: UsageLimit): string {
 	return label;
 }
 
-/** Format one status row per account, grouping that account's quota windows. */
+/**
+ * Format one status row per account, grouping that account's quota windows.
+ * Rows are `<provider>/<account> <window> <remaining>% · …`, sorted by provider, account, then window.
+ * Limits whose used fraction is unresolved or non-finite are skipped; reports left with no limit yield no row.
+ */
 export function formatUsageReports(
 	reports: readonly UsageReport[],
 	resolveUsedFraction: (limit: UsageLimit) => number | undefined,
