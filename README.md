@@ -50,7 +50,7 @@ L'estensione è caricata solo con `omp --extension ./`: smetti di passare `--ext
 
 ```sh
 bun test
-npm exec --yes --package=typescript@5.9.3 -- tsc --noEmit --target ESNext --module preserve --moduleResolution bundler --types bun --skipLibCheck src/index.ts src/usage-summary.ts src/usage-summary.test.ts
+npm exec --yes --package=typescript@5.9.3 -- tsc --noEmit --target ESNext --module preserve --moduleResolution bundler --types bun --skipLibCheck src/index.ts src/usage-summary.ts src/usage-summary.test.ts src/config.ts src/config.test.ts
 ```
 
 Il type check non deve stampare nulla.
@@ -60,5 +60,7 @@ Flusso GitFlow: sviluppo su `feature/*` da `develop`, merge `--no-ff` in `develo
 Struttura di `src/`:
 
 - `index.ts`: estensione OMP (ciclo di vita, fetch dei report, righe del footer).
-- `usage-summary.ts`: formattazione pura dei report in righe di testo.
+- `usage-summary.ts`: formattazione pura dei report in righe di testo (modalità etichetta, abbonamenti nascosti).
 - `usage-summary.test.ts`: test del formatter.
+- `config.ts`: lettura, merge e scrittura dei file di configurazione.
+- `config.test.ts`: test della configurazione.
