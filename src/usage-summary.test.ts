@@ -226,7 +226,7 @@ describe("bars", () => {
 
 describe("text color", () => {
 	const now = new Date(2026, 9, 28, 12, 0).getTime();
-	const paint: UsageBarOptions["paint"] = (style, text) => `<${style}>${text}</>`;
+	const paint: UsageBarOptions["paint"] = (style, text, inverse) => `<${inverse ? "^" : ""}${style}>${text}</>`;
 	const resetAt = now + 2.5 * 3_600_000 + 59_000;
 	const limits = [
 		limit("anthropic", "daily", "Quota", { unit: "percent", used: 95 }, { id: "5h", label: "5 Hour", resetsAt: resetAt }, "5h"),
@@ -288,6 +288,6 @@ describe("text color", () => {
 				textColor: "window",
 			},
 		);
-		expect(single).toEqual(["<ok>Quota 5 Hou</><ok>r 69%</>"]);
+		expect(single).toEqual(["<^ok>Quota 5 Hou</><ok>r 69%</>"]);
 	});
 });
