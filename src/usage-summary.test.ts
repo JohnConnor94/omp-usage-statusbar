@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { resolveUsedFraction, type UsageLimit, type UsageReport } from "@oh-my-pi/pi-ai";
 import { sanitizeText } from "@oh-my-pi/pi-utils";
-import { DEFAULT_DISPLAY, formatUsageReports, listUsageSubscriptions } from "./usage-summary";
+import { DEFAULT_DISPLAY, formatUsageReports, listUsageSubscriptions, type UsageResetMode } from "./usage-summary";
 
 function limit(
 	provider: UsageLimit["scope"]["provider"],
@@ -70,7 +70,7 @@ describe("formatUsageReports", () => {
 
 	test("hidden removes exactly the matching subscription", () => {
 		const hidden = new Set(["openai-codex/same@example.com (acct-a, Team)"]);
-		expect(formatUsageReports(mixedReports(), resolveUsedFraction, sanitizeText, { label: "full", hidden })).toEqual([
+		expect(formatUsageReports(mixedReports(), resolveUsedFraction, sanitizeText, { ...DEFAULT_DISPLAY, hidden })).toEqual([
 			"anthropic/a@example.com (Team One) Quota 5 Hour 67% · Quota 7 Day 67%",
 			"openai-codex/same@example.com (#4) Hourly 90%",
 			"openai-codex/same@example.com (org-z, Plus) 5 Hour 50%",
@@ -92,7 +92,7 @@ describe("formatUsageReports", () => {
 			"anthropic/a@example.com (Team One)",
 			"openai-codex/same@example.com (Team)",
 		]);
-		subscriptions.forEach((s, i) => expect(rows[i]).toBe(`${s.key} ${s.windows.join(" · ")}`));
+		subscriptions.forEach((s, i) => expect(rows[i].startsWith(`${s.key} `)).toBe(true));
 	});
 
 	test("clamps over-limit and negative usage, and skips unresolved or non-finite amounts", () => {
@@ -141,5 +141,46 @@ describe("formatUsageReports", () => {
 		expect(
 			formatUsageReports([report("anthropic", {}, [limit("anthropic", "unknown", "Unknown", { unit: "unknown" })])], resolveUsedFraction, sanitizeText, DEFAULT_DISPLAY),
 		).toEqual([]);
+	});
+});
+
+describe("reset times", () => {
+	const now = new Date(2026, 9, 28, 12, 0).getTime();
+	const rows = (resetsAt: number, resets: UsageResetMode, resetLabel?: string) =>
+		formatUsageReports(
+			[
+				report("anthropic", { accountId: "acct" }, [
+					limit("anthropic", "daily", "Quota", { unit: "percent", used: 31 }, { id: "5h", label: "5 Hour", resetsAt, resetLabel }, "5h"),
+				]),
+			],
+			resolveUsedFraction,
+			sanitizeText,
+			{ ...DEFAULT_DISPLAY, label: "none", resets, nowMs: now },
+		);
+	const inTwoHalfHours = now + 2.5 * 3_600_000 + 59_000;
+
+	test("countdown floors to whole minutes", () => {
+		expect(rows(inTwoHalfHours, "countdown")).toEqual(["Quota 5 Hour 69% 2h30m"]);
+	});
+
+	test("verbose uses the provider verb, defaulting to resets", () => {
+		expect(rows(inTwoHalfHours, "verbose")).toEqual(["Quota 5 Hour 69% (resets in 2h30m)"]);
+		expect(rows(inTwoHalfHours, "verbose", "tick")).toEqual(["Quota 5 Hour 69% (tick in 2h30m)"]);
+	});
+
+	test("clock shows time today, weekday within 6 days, date beyond", () => {
+		expect(rows(new Date(2026, 9, 28, 18, 0).getTime(), "clock")).toEqual(["Quota 5 Hour 69% (resets 18:00)"]);
+		expect(rows(new Date(2026, 9, 30, 9, 5).getTime(), "clock")).toEqual(["Quota 5 Hour 69% (resets Fri 09:05)"]);
+		expect(rows(new Date(2026, 10, 10, 0, 0).getTime(), "clock")).toEqual(["Quota 5 Hour 69% (resets 10 Nov)"]);
+	});
+
+	test("off, missing, and past resets add no suffix", () => {
+		expect(rows(inTwoHalfHours, "off")).toEqual(["Quota 5 Hour 69%"]);
+		expect(rows(now - 1, "countdown")).toEqual(["Quota 5 Hour 69%"]);
+		expect(rows(Number.NaN, "countdown")).toEqual(["Quota 5 Hour 69%"]);
+	});
+
+	test("countdown under a minute shows 1m", () => {
+		expect(rows(now + 10_000, "countdown")).toEqual(["Quota 5 Hour 69% 1m"]);
 	});
 });

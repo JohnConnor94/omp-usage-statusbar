@@ -4,12 +4,12 @@ Estensione per [OMP](https://github.com/can1357/oh-my-pi) che mostra nel footer 
 
 ## Cosa fa
 
-Mostra nel footer una riga per ogni abbonamento (account di un provider), con la percentuale **rimanente** per ogni finestra di quota. I dati vengono dagli stessi report di `/usage`.
+Mostra nel footer una riga per ogni abbonamento (account di un provider), con la percentuale **rimanente** per ogni finestra di quota e il tempo mancante al suo reset, come le schede di `/usage`. I dati vengono dagli stessi report di `/usage`.
 
 Esempio di riga:
 
 ```
-anthropic/user@example.com (Org) Claude 5 Hour 69% · Claude 7 Day 73%
+anthropic/user@example.com (Org) Claude 5 Hour 69% 2h30m · Claude 7 Day 73% 3d2h
 ```
 
 L'aggiornamento avviene all'avvio della sessione, dopo ogni turno e ogni 60 s. La cache di OMP tiene i dati per circa 5 minuti, quindi i numeri cambiano più lentamente. `/usage` + `r` aggiorna il dashboard, non il footer.
@@ -42,7 +42,7 @@ Le righe compaiono una volta sola. Alternativa senza collegamento: `omp --extens
 
 ## Uso
 
-Con `label: full` (predefinito) ogni riga ha la forma `<provider>/<account> <finestra> <residuo>% · …`, ordinata per provider, account e finestra; le modalità `provider` e `none` accorciano il prefisso (vedi `Configurazione`). Le finestre senza dato risolvibile sono omesse.
+Con `label: full` (predefinito) ogni riga ha la forma `<provider>/<account> <finestra> <residuo>% [<reset>] · …`, ordinata per provider, account e finestra; le modalità `provider` e `none` accorciano il prefisso (vedi `Configurazione`). Le finestre senza dato risolvibile sono omesse. Il reset compare solo se il provider lo comunica e non è già passato; il countdown scende a minuti interi, con minimo `1m`.
 
 Messaggi di stato:
 
@@ -58,14 +58,19 @@ Le impostazioni si leggono da due file JSON, scritti dal comando `/usage-statusb
 - progetto: `<progetto>/.omp/usage-statusbar.json`, sovrascrive il globale.
 
 ```json
-{ "enabled": true, "label": "provider", "hidden": ["github-copilot/octocat"] }
+{ "enabled": true, "label": "provider", "resets": "clock", "hidden": ["github-copilot/octocat"] }
 ```
 
 - `enabled`: `true` mostra le righe, `false` le nasconde.
 - `label`: nome dell'account nella riga.
-  - `full` (predefinito): `anthropic/user@example.com (Org) Claude 5 Hour 69% · Claude 7 Day 73%`
-  - `provider`: `anthropic Claude 5 Hour 69% · Claude 7 Day 73%`
-  - `none`: `Claude 5 Hour 69% · Claude 7 Day 73%` (solo le finestre).
+  - `full` (predefinito): `anthropic/user@example.com (Org) Claude 5 Hour 69% 2h30m · Claude 7 Day 73% 3d2h`
+  - `provider`: `anthropic Claude 5 Hour 69% 2h30m · Claude 7 Day 73% 3d2h`
+  - `none`: `Claude 5 Hour 69% 2h30m · Claude 7 Day 73% 3d2h` (solo le finestre).
+- `resets`: come ogni finestra mostra il suo reset (ora locale; il verbo `resets` può diventare `tick` o `regen` se il provider lo indica).
+  - `countdown` (predefinito): `Claude 5 Hour 69% 2h30m`
+  - `verbose`: `Claude 5 Hour 69% (resets in 2h30m)`
+  - `clock`: `Claude 5 Hour 69% (resets 18:00)`; `(resets Tue 18:00)` entro 6 giorni, `(resets 3 Oct)` oltre.
+  - `off`: `Claude 5 Hour 69%` (solo percentuali).
 - `hidden`: abbonamenti da nascondere, identificati dalla parte `<provider>/<account>` della modalità `full`.
 
 Precedenza per chiave: predefiniti < globale < progetto. `hidden` del progetto sostituisce l'intera lista globale, non la unisce. Un file illegibile o non valido viene ignorato con un avviso. Le modifiche ai file fatte a mano si applicano al riavvio di OMP.
@@ -78,6 +83,7 @@ Modifica i file senza toccarli a mano e applica subito il cambiamento al footer 
 2. Nel menu:
    - `Enabled: on|off`: attiva o disattiva le righe.
    - `Account label`: `Full`, `Provider only` o `None — windows only`. Nello scope `Project` i valori non scritti nel file di progetto sono marcati `(inherited)`.
+   - `Reset times`: `Countdown`, `Countdown with verb`, `Clock` o `Off` (stessa marcatura `(inherited)`).
    - `Subscriptions…`: sceglie gli abbonamenti visibili (vedi sotto).
    - `Reset project overrides` (solo `Project`): cancella `<progetto>/.omp/usage-statusbar.json`.
    - `Done`: esce.

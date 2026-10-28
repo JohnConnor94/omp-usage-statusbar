@@ -15,7 +15,7 @@ import {
 	type UsageStatusbarConfig,
 	updateConfigFile,
 } from "./config";
-import { formatUsageReports, listUsageSubscriptions, type UsageLabelMode } from "./usage-summary";
+import { formatUsageReports, listUsageSubscriptions, type UsageLabelMode, type UsageResetMode } from "./usage-summary";
 
 const STATUS_KEY = "usage-statusbar";
 const REFRESH_MS = 60_000;
@@ -33,8 +33,8 @@ function statusRowKey(index: number): string {
  *   start the 60 s refresh timer.
  * - `turn_end`: refresh again after each turn (when enabled).
  * - `session_shutdown`: abort any in-flight fetch, stop the timer, clear every footer row.
- * - `/usage-statusbar` (TUI only): edit the global or project config (on/off, label mode, hidden
- *   subscriptions) and apply it live.
+ * - `/usage-statusbar` (TUI only): edit the global or project config (on/off, label mode, reset times,
+ *   hidden subscriptions) and apply it live.
  */
 export default function (pi: ExtensionAPI) {
 	let timer: Timer | undefined;
@@ -86,7 +86,7 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 		// Every subscription hidden gives [] and clears all rows.
-		const display = { label: config.label, hidden: new Set(config.hidden) };
+		const display = { label: config.label, hidden: new Set(config.hidden), resets: config.resets };
 		setStatuses(ctx, formatUsageReports(lastReports, resolveUsedFraction, sanitizeText, display));
 	}
 
@@ -175,6 +175,14 @@ export default function (pi: ExtensionAPI) {
 		["None — windows only", "none"],
 	]);
 
+	/** Reset time choices for the `Reset times` submenu. */
+	const RESET_CHOICES = new Map<string, UsageResetMode>([
+		["Countdown — Claude 5 Hour 69% 2h30m", "countdown"],
+		["Countdown with verb — Claude 5 Hour 69% (resets in 2h30m)", "verbose"],
+		["Clock — Claude 5 Hour 69% (resets 18:00)", "clock"],
+		["Off — percentages only", "off"],
+	]);
+
 	/** The scope's own file content plus the effective values seen from that scope (global: defaults + global). */
 	async function readScope(ctx: ExtensionContext, scope: ConfigScope) {
 		const [global, project] = await Promise.all([
@@ -237,6 +245,11 @@ export default function (pi: ExtensionAPI) {
 				const label = picked === undefined ? undefined : LABEL_CHOICES.get(picked);
 				if (label) await applyPatch(ctx, scope, { label });
 			});
+			items.set(`Reset times: ${view.resets}${inherited("resets")}`, async () => {
+				const picked = await ctx.ui.select("Reset times", [...RESET_CHOICES.keys()]);
+				const resets = picked === undefined ? undefined : RESET_CHOICES.get(picked);
+				if (resets) await applyPatch(ctx, scope, { resets });
+			});
 			items.set("Subscriptions…", () => subscriptionsMenu(ctx, scope));
 			if (scope === "project") {
 				items.set("Reset project overrides", async () => {
@@ -250,7 +263,7 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	pi.registerCommand("usage-statusbar", {
-		description: "Configure the usage status bar (subscriptions, label, on/off)",
+		description: "Configure the usage status bar (subscriptions, label, reset times, on/off)",
 		handler: async (_args, ctx) => {
 			if (ctx.mode !== "tui") {
 				ctx.ui.notify("usage-statusbar settings need the interactive TUI", "warning");

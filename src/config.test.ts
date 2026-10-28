@@ -19,6 +19,7 @@ describe("mergeConfig", () => {
 		expect(mergeConfig({ label: "none", hidden: ["a"] }, { hidden: [] })).toEqual({
 			enabled: true,
 			label: "none",
+			resets: "countdown",
 			hidden: [],
 		});
 	});
@@ -39,7 +40,10 @@ describe("readConfigFile", () => {
 
 	test("drops fields with the wrong type and non-string hidden entries", async () => {
 		const file = path.join(dir, "types.json");
-		await Bun.write(file, JSON.stringify({ enabled: "yes", label: "huge", hidden: ["a", 1, null, "b"], extra: 1 }));
+		await Bun.write(
+			file,
+			JSON.stringify({ enabled: "yes", label: "huge", resets: "soon", hidden: ["a", 1, null, "b"], extra: 1 }),
+		);
 		expect(await readConfigFile(file)).toEqual({ config: { hidden: ["a", "b"] } });
 	});
 });
@@ -49,6 +53,7 @@ describe("updateConfigFile", () => {
 		const file = path.join(dir, "nested", "usage-statusbar.json");
 		await updateConfigFile(file, { label: "provider" });
 		await updateConfigFile(file, { enabled: false });
-		expect(await readConfigFile(file)).toEqual({ config: { label: "provider", enabled: false } });
+		await updateConfigFile(file, { resets: "clock" });
+		expect(await readConfigFile(file)).toEqual({ config: { label: "provider", enabled: false, resets: "clock" } });
 	});
 });
