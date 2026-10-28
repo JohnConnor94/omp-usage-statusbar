@@ -27,10 +27,18 @@ L'estensione è visibile solo nella TUI interattiva (non con `-p` né in RPC) e 
 git clone <url-del-repository> omp-usage-monitor
 cd omp-usage-monitor
 bun install
-omp --extension ./
 ```
 
 Se `bun install` fallisce per un registry privato in `.npmrc`, usa `bun install --registry=https://registry.npmjs.org`.
+
+Registra il plugin (un symlink al repository, abilitato di default) e avvia OMP senza altri argomenti:
+
+```sh
+omp plugin link .
+omp
+```
+
+Le righe compaiono una volta sola. Alternativa senza collegamento: `omp --extension ./`. Usa una sola delle due modalità: combinarle non ha prodotto righe doppie nella prova fatta, ma non è una configurazione supportata.
 
 ## Uso
 
@@ -80,9 +88,26 @@ Il menu `Subscriptions…` elenca gli abbonamenti caricati: `[x]` visibile, `[ ]
 
 Dal vivo, senza riavviare: `/usage-statusbar` → scope → `Enabled`. Con `off` le righe spariscono e i fetch si fermano; con `on` compare `Usage: loading` e poi le righe. Il valore `enabled` è salvato nel file dello scope scelto.
 
+Da plugin (se installato con `omp plugin link .`):
+
+```
+/plugins disable omp-usage-statusbar
+/plugins enable omp-usage-statusbar
+```
+
+Il cambio **non è immediato**: le righe restano finché non riavvii `omp`. Dopo il riavvio con il plugin disattivato non compaiono righe e `/usage-statusbar` non esiste più (il testo viene inviato al modello come messaggio normale). Dopo `/plugins enable` e un riavvio le righe tornano. Per un on/off senza riavvio usa `Enabled`.
+
 ## Disinstallazione
 
-L'estensione è caricata solo con `omp --extension ./`: smetti di passare `--extension ./`.
+Se hai installato il plugin con `omp plugin link .`:
+
+```sh
+omp plugin uninstall omp-usage-statusbar
+```
+
+Rimuove solo il collegamento: la cartella del repository resta intatta. Se invece lo caricavi con `omp --extension ./`, smetti di passare `--extension ./`.
+
+Facoltativo: cancella le impostazioni, cioè `~/.omp/agent/usage-statusbar.json` e il file `.omp/usage-statusbar.json` di ogni progetto.
 
 ## Sviluppo
 
