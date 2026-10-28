@@ -37,37 +37,50 @@ function windowLabel(limit: UsageLimit): string {
 	return label;
 }
 
-/** Compact `<provider>/<account> <window> <remaining>%` summary; skips limits without a resolvable fraction. */
+/** Format one status row per account, grouping that account's quota windows. */
 export function formatUsageReports(
 	reports: readonly UsageReport[],
 	resolveUsedFraction: (limit: UsageLimit) => number | undefined,
 	sanitizeText: (text: string) => string,
-): string {
+): string[] {
 	const codexEmails = new Map<string, number>();
 	for (const report of reports) {
 		const email = report.provider === "openai-codex" ? str(report.metadata?.email) : undefined;
 		if (email) codexEmails.set(email, (codexEmails.get(email) ?? 0) + 1);
 	}
 
-	const entries: { provider: string; account: string; window: string; text: string }[] = [];
+	const entries: { reportIndex: number; provider: string; account: string; window: string; remaining: number }[] = [];
 	reports.forEach((report, index) => {
 		const email = str(report.metadata?.email);
 		const account = accountLabel(report, index, !!email && (codexEmails.get(email) ?? 0) > 1);
 		for (const limit of report.limits) {
 			const used = resolveUsedFraction(limit);
 			if (used === undefined || !Number.isFinite(used)) continue;
-			const remaining = Math.round(Math.min(Math.max(1 - used, 0), 1) * 100);
-			const window = windowLabel(limit);
 			entries.push({
+				reportIndex: index,
 				provider: report.provider,
 				account,
-				window,
-				text: sanitizeText(`${report.provider}/${account} ${window} ${remaining}%`),
+				window: windowLabel(limit),
+				remaining: Math.round(Math.min(Math.max(1 - used, 0), 1) * 100),
 			});
 		}
 	});
 
 	const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
-	entries.sort((a, b) => cmp(a.provider, b.provider) || cmp(a.account, b.account) || cmp(a.window, b.window));
-	return entries.map(e => e.text).join(" · ");
+	entries.sort(
+		(a, b) =>
+			cmp(a.provider, b.provider) ||
+			cmp(a.account, b.account) ||
+			a.reportIndex - b.reportIndex ||
+			cmp(a.window, b.window),
+	);
+
+	const rows: { reportIndex: number; text: string }[] = [];
+	for (const entry of entries) {
+		const window = `${entry.window} ${entry.remaining}%`;
+		const previous = rows[rows.length - 1];
+		if (previous?.reportIndex === entry.reportIndex) previous.text += ` · ${window}`;
+		else rows.push({ reportIndex: entry.reportIndex, text: `${entry.provider}/${entry.account} ${window}` });
+	}
+	return rows.map(({ text }) => sanitizeText(text).replace(/\s+/g, " ").trim());
 }
