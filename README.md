@@ -9,8 +9,12 @@ Mostra nel footer una riga per ogni abbonamento (account di un provider), con la
 Esempio di riga:
 
 ```
-anthropic/user@example.com (Org) Claude 5 Hour 69% 2h30m · Claude 7 Day 73% 3d2h
+anthropic/user@example.com (Org) Claude 5 Hour ███████░░░ 69% 2h30m · Claude 7 Day ███████░░░ 73% 3d2h
 ```
+
+Ogni finestra mostra una barra della quota rimanente: verde sopra il 25%, gialla fino al 25%, rossa fino al 10%.
+
+Il testo della riga può anche assumere i colori del livello: `textColor` sceglie quali parti colorare.
 
 L'aggiornamento avviene all'avvio della sessione, dopo ogni turno e ogni 60 s. La cache di OMP tiene i dati per circa 5 minuti, quindi i numeri cambiano più lentamente. `/usage` + `r` aggiorna il dashboard, non il footer.
 
@@ -42,7 +46,7 @@ Le righe compaiono una volta sola. Alternativa senza collegamento: `omp --extens
 
 ## Uso
 
-Con `label: full` (predefinito) ogni riga ha la forma `<provider>/<account> <finestra> <residuo>% [<reset>] · …`, ordinata per provider, account e finestra; le modalità `provider` e `none` accorciano il prefisso (vedi `Configurazione`). Le finestre senza dato risolvibile sono omesse. Il reset compare solo se il provider lo comunica e non è già passato; il countdown scende a minuti interi, con minimo `1m`.
+Con `label: full` (predefinito) ogni riga ha la forma `<provider>/<account> <finestra> [<barra>] <residuo>% [<reset>] · …`, ordinata per provider, account e finestra; le modalità `provider` e `none` accorciano il prefisso (vedi `Configurazione`). Le finestre senza dato risolvibile sono omesse. Il reset compare solo se il provider lo comunica e non è già passato; il countdown scende a minuti interi, con minimo `1m`.
 
 Messaggi di stato:
 
@@ -58,19 +62,34 @@ Le impostazioni si leggono da due file JSON, scritti dal comando `/usage-statusb
 - progetto: `<progetto>/.omp/usage-statusbar.json`, sovrascrive il globale.
 
 ```json
-{ "enabled": true, "label": "provider", "resets": "clock", "hidden": ["github-copilot/octocat"] }
+{ "enabled": true, "label": "provider", "resets": "clock", "bar": "below", "barWarn": 30, "barCritical": 5, "textColor": "split", "hidden": ["github-copilot/octocat"] }
 ```
 
 - `enabled`: `true` mostra le righe, `false` le nasconde.
 - `label`: nome dell'account nella riga.
-  - `full` (predefinito): `anthropic/user@example.com (Org) Claude 5 Hour 69% 2h30m · Claude 7 Day 73% 3d2h`
-  - `provider`: `anthropic Claude 5 Hour 69% 2h30m · Claude 7 Day 73% 3d2h`
-  - `none`: `Claude 5 Hour 69% 2h30m · Claude 7 Day 73% 3d2h` (solo le finestre).
+  - `full` (predefinito): `anthropic/user@example.com (Org) Claude 5 Hour ███████░░░ 69% 2h30m · Claude 7 Day ███████░░░ 73% 3d2h`
+  - `provider`: `anthropic Claude 5 Hour ███████░░░ 69% 2h30m · Claude 7 Day ███████░░░ 73% 3d2h`
+  - `none`: `Claude 5 Hour ███████░░░ 69% 2h30m · Claude 7 Day ███████░░░ 73% 3d2h` (solo le finestre).
 - `resets`: come ogni finestra mostra il suo reset (ora locale; il verbo `resets` può diventare `tick` o `regen` se il provider lo indica).
-  - `countdown` (predefinito): `Claude 5 Hour 69% 2h30m`
-  - `verbose`: `Claude 5 Hour 69% (resets in 2h30m)`
-  - `clock`: `Claude 5 Hour 69% (resets 18:00)`; `(resets Tue 18:00)` entro 6 giorni, `(resets 3 Oct)` oltre.
-  - `off`: `Claude 5 Hour 69%` (solo percentuali).
+  - `countdown` (predefinito): `Claude 5 Hour ███████░░░ 69% 2h30m`
+  - `verbose`: `Claude 5 Hour ███████░░░ 69% (resets in 2h30m)`
+  - `clock`: `Claude 5 Hour ███████░░░ 69% (resets 18:00)`; `(resets Tue 18:00)` entro 6 giorni, `(resets 3 Oct)` oltre.
+  - `off`: `Claude 5 Hour ███████░░░ 69%` (solo percentuali).
+- `bar`: posizione delle barre (predefinito `beside`).
+  - `beside`: barra fra il nome della finestra e la percentuale, per esempio `Claude 5 Hour ███████░░░ 69%`.
+  - `below`: una seconda riga con le barre allineate sotto ogni finestra, per esempio `Claude 5 Hour 69%` seguito da `└  ███████░░░`.
+  - `overlay`: per esempio il testo `Claude 5 Hour` viene colorato dalla barra.
+  - `off`: nessuna barra (`bar: off`), per esempio `Claude 5 Hour 69%`.
+- `barWarn` (predefinito 25): numero 0–100; al valore o sotto, la barra diventa gialla. Valori non validi sono ignorati.
+- `barCritical` (predefinito 10): numero 0–100; al valore o sotto, la barra diventa rossa. Valori non validi sono ignorati.
+- `textColor` (predefinito `off`): come colorare il testo in base al livello della quota.
+  - `off`: colora solo la barra.
+  - `percent`: colora solo `NN%` nel colore del livello.
+  - `window`: colora nome, percentuale e reset di ogni finestra nel suo livello.
+  - `split`: come `window`, più il prefisso nel livello peggiore della riga.
+  - `row`: colora tutta la riga, compresi prefisso e separatori, nel livello peggiore.
+  - `parts`: prefisso accent, nome neutro, percentuale per livello e reset dim.
+  In modalità `overlay`, solo `window`, `split` e `row` colorano la parte non ombreggiata.
 - `hidden`: abbonamenti da nascondere, identificati dalla parte `<provider>/<account>` della modalità `full`.
 
 Precedenza per chiave: predefiniti < globale < progetto. `hidden` del progetto sostituisce l'intera lista globale, non la unisce. Un file illegibile o non valido viene ignorato con un avviso. Le modifiche ai file fatte a mano si applicano al riavvio di OMP.
@@ -84,6 +103,9 @@ Modifica i file senza toccarli a mano e applica subito il cambiamento al footer 
    - `Enabled: on|off`: attiva o disattiva le righe.
    - `Account label`: `Full`, `Provider only` o `None — windows only`. Nello scope `Project` i valori non scritti nel file di progetto sono marcati `(inherited)`.
    - `Reset times`: `Countdown`, `Countdown with verb`, `Clock` o `Off` (stessa marcatura `(inherited)`).
+   - `Bar`: `Beside`, `Below`, `Overlay` o `Off` (stessa marcatura `(inherited)`).
+   - `Bar thresholds`: due campi numerici; un valore vuoto mantiene quello corrente e il rosso non può superare il giallo.
+   - `Text color`: `Off`, `Percent`, `Window`, `Window + prefix`, `Row` o `Parts`.
    - `Subscriptions…`: sceglie gli abbonamenti visibili (vedi sotto).
    - `Reset project overrides` (solo `Project`): cancella `<progetto>/.omp/usage-statusbar.json`.
    - `Done`: esce.

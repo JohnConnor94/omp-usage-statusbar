@@ -15,9 +15,11 @@ import {
 	type UsageStatusbarConfig,
 	updateConfigFile,
 } from "./config";
-import { formatUsageReports, listUsageSubscriptions, type UsageLabelMode, type UsageResetMode } from "./usage-summary";
+import { formatUsageReports, listUsageSubscriptions, type UsageBarMode, type UsageBarOptions, type UsageLabelMode, type UsagePaintStyle, type UsageResetMode, type UsageTextColorMode } from "./usage-summary";
 
 const STATUS_KEY = "usage-statusbar";
+/** Theme colour of each paint style: bar bands, empty cells, and text parts. */
+const PAINT_COLORS = { ok: "success", warn: "warning", critical: "error", empty: "dim", prefix: "accent", reset: "dim" } as const satisfies Record<UsagePaintStyle, string>;
 const REFRESH_MS = 60_000;
 const SANDBOX_URL = "https://daily-cloudcode-pa.sandbox.googleapis.com";
 const PRODUCTION_URL = "https://daily-cloudcode-pa.googleapis.com";
@@ -34,7 +36,7 @@ function statusRowKey(index: number): string {
  * - `turn_end`: refresh again after each turn (when enabled).
  * - `session_shutdown`: abort any in-flight fetch, stop the timer, clear every footer row.
  * - `/usage-statusbar` (TUI only): edit the global or project config (on/off, label mode, reset times,
- *   hidden subscriptions) and apply it live.
+ *   bar position and thresholds, text colour, hidden subscriptions) and apply it live.
  */
 export default function (pi: ExtensionAPI) {
 	let timer: Timer | undefined;
@@ -86,7 +88,17 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 		// Every subscription hidden gives [] and clears all rows.
-		const display = { label: config.label, hidden: new Set(config.hidden), resets: config.resets };
+		const theme = ctx.ui.theme;
+		const bar: UsageBarOptions = {
+			mode: config.bar,
+			warn: config.barWarn,
+			critical: config.barCritical,
+			paint: (level, text, inverse) =>
+				inverse
+					? `${theme.getFgAnsi(PAINT_COLORS[level])}\x1b[7m${text}\x1b[27m\x1b[39m`
+					: theme.fg(PAINT_COLORS[level], text),
+		};
+		const display = { label: config.label, hidden: new Set(config.hidden), resets: config.resets, bar, textColor: config.textColor };
 		setStatuses(ctx, formatUsageReports(lastReports, resolveUsedFraction, sanitizeText, display));
 	}
 
@@ -183,6 +195,24 @@ export default function (pi: ExtensionAPI) {
 		["Off — percentages only", "off"],
 	]);
 
+	/** Bar position choices for the `Bar` submenu. */
+	const BAR_CHOICES = new Map<string, UsageBarMode>([
+		["Beside — Claude 5 Hour ███████░░░ 69%", "beside"],
+		["Below — a row of bars under each subscription", "below"],
+		["Overlay — window text shaded as the bar", "overlay"],
+		["Off — no bar", "off"],
+	]);
+
+	/** Text colour choices for the `Text color` submenu. */
+	const TEXT_COLOR_CHOICES = new Map<string, UsageTextColorMode>([
+		["Off — only the bar is coloured", "off"],
+		["Percent — only NN% in the level colour", "percent"],
+		["Window — each window in its own level colour", "window"],
+		["Window + prefix — prefix in the worst level", "split"],
+		["Row — whole row in the worst level", "row"],
+		["Parts — prefix accent, % by level, reset dim", "parts"],
+	]);
+
 	/** The scope's own file content plus the effective values seen from that scope (global: defaults + global). */
 	async function readScope(ctx: ExtensionContext, scope: ConfigScope) {
 		const [global, project] = await Promise.all([
@@ -231,6 +261,12 @@ export default function (pi: ExtensionAPI) {
 
 	/** Main menu of one scope; loops until Done or Esc. Each pass re-reads the files so labels stay current. */
 	async function scopeMenu(ctx: ExtensionCommandContext, scope: ConfigScope): Promise<void> {
+		const parsePercent = (text: string, current: number): number | undefined => {
+			const trimmed = text.trim();
+			if (!trimmed) return current;
+			const value = Number(trimmed);
+			return Number.isFinite(value) && value >= 0 && value <= 100 ? value : undefined;
+		};
 		for (;;) {
 			const { own, view } = await readScope(ctx, scope);
 			const inherited = (key: keyof UsageStatusbarConfig) =>
@@ -250,6 +286,33 @@ export default function (pi: ExtensionAPI) {
 				const resets = picked === undefined ? undefined : RESET_CHOICES.get(picked);
 				if (resets) await applyPatch(ctx, scope, { resets });
 			});
+			items.set(`Bar: ${view.bar}${inherited("bar")}`, async () => {
+				const picked = await ctx.ui.select("Bar", [...BAR_CHOICES.keys()]);
+				const bar = picked === undefined ? undefined : BAR_CHOICES.get(picked);
+				if (bar) await applyPatch(ctx, scope, { bar });
+			});
+			items.set(`Bar thresholds: yellow ≤ ${view.barWarn}%, red ≤ ${view.barCritical}%${inherited("barWarn")}`, async () => {
+				const warnText = await ctx.ui.input("Yellow at or below remaining % (0-100)", String(view.barWarn));
+				if (warnText === undefined) return;
+				const criticalText = await ctx.ui.input("Red at or below remaining % (0-100)", String(view.barCritical));
+				if (criticalText === undefined) return;
+				const warn = parsePercent(warnText, view.barWarn);
+				const critical = parsePercent(criticalText, view.barCritical);
+				if (warn === undefined || critical === undefined) {
+					ctx.ui.notify("Thresholds must be numbers from 0 to 100", "warning");
+					return;
+				}
+				if (critical > warn) {
+					ctx.ui.notify("Red threshold must not exceed yellow threshold", "warning");
+					return;
+				}
+				await applyPatch(ctx, scope, { barWarn: warn, barCritical: critical });
+			});
+			items.set(`Text color: ${view.textColor}${inherited("textColor")}`, async () => {
+				const picked = await ctx.ui.select("Text color", [...TEXT_COLOR_CHOICES.keys()]);
+				const textColor = picked === undefined ? undefined : TEXT_COLOR_CHOICES.get(picked);
+				if (textColor) await applyPatch(ctx, scope, { textColor });
+			});
 			items.set("Subscriptions…", () => subscriptionsMenu(ctx, scope));
 			if (scope === "project") {
 				items.set("Reset project overrides", async () => {
@@ -263,7 +326,7 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	pi.registerCommand("usage-statusbar", {
-		description: "Configure the usage status bar (subscriptions, label, reset times, on/off)",
+		description: "Configure the usage status bar (subscriptions, label, reset times, bars, colours, on/off)",
 		handler: async (_args, ctx) => {
 			if (ctx.mode !== "tui") {
 				ctx.ui.notify("usage-statusbar settings need the interactive TUI", "warning");

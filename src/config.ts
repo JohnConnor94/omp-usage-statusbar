@@ -1,30 +1,46 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { getAgentDir, getConfigDirName } from "@oh-my-pi/pi-utils";
-import type { UsageLabelMode, UsageResetMode } from "./usage-summary";
+import type { UsageBarMode, UsageLabelMode, UsageResetMode, UsageTextColorMode } from "./usage-summary";
 
 /** Settings as stored in one config file; every key is optional and falls back to the next layer. */
 export interface UsageStatusbarConfig {
 	enabled?: boolean;
 	label?: UsageLabelMode;
 	resets?: UsageResetMode;
+	/** Position of each remaining-quota bar. */
+	bar?: UsageBarMode;
+	/** Remaining % at or below which the bar turns yellow. */
+	barWarn?: number;
+	/** Remaining % at or below which the bar turns red. */
+	barCritical?: number;
+	/** How row text is coloured by quota level. */
+	textColor?: UsageTextColorMode;
 	/** Subscription keys (`UsageSubscription.key`) to hide. */
 	hidden?: string[];
 }
-
 /** Fully resolved settings after merging defaults, global and project files. */
 export interface EffectiveConfig {
 	enabled: boolean;
 	label: UsageLabelMode;
 	resets: UsageResetMode;
+	bar: UsageBarMode;
+	barWarn: number;
+	barCritical: number;
+	textColor: UsageTextColorMode;
 	hidden: string[];
 }
+
 
 /** Which config file a setting is read from or written to. */
 export type ConfigScope = "global" | "project";
 
 const LABELS: readonly string[] = ["full", "provider", "none"];
 const RESETS: readonly string[] = ["countdown", "verbose", "clock", "off"];
+const BARS: readonly string[] = ["beside", "below", "overlay", "off"];
+const TEXT_COLORS: readonly string[] = ["off", "percent", "window", "split", "row", "parts"];
+const isPercent = (value: unknown): value is number =>
+	typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100;
 
 /** Path of the global config file, `~/.omp/agent/usage-statusbar.json`. */
 export function globalConfigPath(): string {
@@ -37,7 +53,7 @@ export function projectConfigPath(cwd: string): string {
 }
 
 /**
- * Read one config file, keeping only valid fields: boolean `enabled`, known `label` and `resets`, string entries of `hidden`.
+ * Read one config file, keeping only valid enabled, label, reset, bar, threshold, text color and hidden fields.
  * A missing file gives `{ config: {} }`; unparseable JSON or a non-object root gives `{ config: {}, error }`.
  */
 export async function readConfigFile(file: string): Promise<{ config: UsageStatusbarConfig; error?: string }> {
@@ -55,21 +71,25 @@ export async function readConfigFile(file: string): Promise<{ config: UsageStatu
 		return invalid;
 	}
 	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return invalid;
-	const { enabled, label, resets, hidden } = parsed as Record<string, unknown>;
+	const { enabled, label, resets, bar, barWarn, barCritical, textColor, hidden } = parsed as Record<string, unknown>;
 	const config: UsageStatusbarConfig = {};
 	if (typeof enabled === "boolean") config.enabled = enabled;
 	if (typeof label === "string" && LABELS.includes(label)) config.label = label as UsageLabelMode;
 	if (typeof resets === "string" && RESETS.includes(resets)) config.resets = resets as UsageResetMode;
+	if (typeof bar === "string" && BARS.includes(bar)) config.bar = bar as UsageBarMode;
+	if (isPercent(barWarn)) config.barWarn = barWarn;
+	if (isPercent(barCritical)) config.barCritical = barCritical;
+	if (typeof textColor === "string" && TEXT_COLORS.includes(textColor)) config.textColor = textColor as UsageTextColorMode;
 	if (Array.isArray(hidden)) config.hidden = hidden.filter((key): key is string => typeof key === "string");
 	return { config };
 }
 
 /**
- * Merge per key: defaults (`enabled`, `full`, `countdown`, no hidden), then `global`, then `project`.
+ * Merge per key: defaults (`enabled`, `full`, `countdown`, `beside`, thresholds 25/10, text color `off`, no hidden), then `global`, then `project`.
  * A project `hidden` list replaces the global one; the lists are never unioned.
  */
 export function mergeConfig(global: UsageStatusbarConfig, project: UsageStatusbarConfig): EffectiveConfig {
-	return { enabled: true, label: "full", resets: "countdown", hidden: [], ...global, ...project };
+	return { enabled: true, label: "full", resets: "countdown", bar: "beside", barWarn: 25, barCritical: 10, textColor: "off", hidden: [], ...global, ...project };
 }
 
 /**

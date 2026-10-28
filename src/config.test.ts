@@ -20,6 +20,10 @@ describe("mergeConfig", () => {
 			enabled: true,
 			label: "none",
 			resets: "countdown",
+			bar: "beside",
+			barWarn: 25,
+			barCritical: 10,
+			textColor: "off",
 			hidden: [],
 		});
 	});
@@ -42,7 +46,7 @@ describe("readConfigFile", () => {
 		const file = path.join(dir, "types.json");
 		await Bun.write(
 			file,
-			JSON.stringify({ enabled: "yes", label: "huge", resets: "soon", hidden: ["a", 1, null, "b"], extra: 1 }),
+			JSON.stringify({ enabled: "yes", label: "huge", resets: "soon", bar: "side", barWarn: 101, barCritical: "5", textColor: "rainbow", hidden: ["a", 1, null, "b"], extra: 1 }),
 		);
 		expect(await readConfigFile(file)).toEqual({ config: { hidden: ["a", "b"] } });
 	});
@@ -54,6 +58,8 @@ describe("updateConfigFile", () => {
 		await updateConfigFile(file, { label: "provider" });
 		await updateConfigFile(file, { enabled: false });
 		await updateConfigFile(file, { resets: "clock" });
-		expect(await readConfigFile(file)).toEqual({ config: { label: "provider", enabled: false, resets: "clock" } });
+		await updateConfigFile(file, { bar: "overlay", barWarn: 30, barCritical: 0 });
+		await updateConfigFile(file, { textColor: "split" });
+		expect(await readConfigFile(file)).toEqual({ config: { label: "provider", enabled: false, resets: "clock", bar: "overlay", barWarn: 30, barCritical: 0, textColor: "split" } });
 	});
 });

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { resolveUsedFraction, type UsageLimit, type UsageReport } from "@oh-my-pi/pi-ai";
 import { sanitizeText } from "@oh-my-pi/pi-utils";
-import { DEFAULT_DISPLAY, formatUsageReports, listUsageSubscriptions, type UsageResetMode } from "./usage-summary";
+import { DEFAULT_DISPLAY, formatUsageReports, listUsageSubscriptions, type UsageBarMode, type UsageBarOptions, type UsageResetMode, type UsageTextColorMode } from "./usage-summary";
 
 function limit(
 	provider: UsageLimit["scope"]["provider"],
@@ -182,5 +182,112 @@ describe("reset times", () => {
 
 	test("countdown under a minute shows 1m", () => {
 		expect(rows(now + 10_000, "countdown")).toEqual(["Quota 5 Hour 69% 1m"]);
+	});
+});
+
+describe("bars", () => {
+	const paint: UsageBarOptions["paint"] = (level, text, inverse) => `<${inverse ? "^" : ""}${level}>${text}</>`;
+	const rows = (mode: UsageBarMode, label: "full" | "none", limits: UsageLimit[]) =>
+		formatUsageReports(
+			[report("anthropic", { accountId: "acct" }, limits)],
+			resolveUsedFraction,
+			sanitizeText,
+			{ ...DEFAULT_DISPLAY, label, resets: "off", bar: { mode, warn: 25, critical: 10, paint } },
+		);
+	const quota = (used: number, windowId = "5h", windowLabel = "5 Hour") =>
+		limit("anthropic", "daily", "Quota", { unit: "percent", used }, { id: windowId, label: windowLabel }, windowId);
+
+	test("beside draws one ten-cell remaining bar per window", () => {
+		expect(rows("beside", "none", [quota(31)])).toEqual(["Quota 5 Hour <ok>███████</><empty>░░░</> 69%"]);
+	});
+
+	test("beside uses inclusive threshold bands and does not paint empty full bars", () => {
+		expect(rows("beside", "none", [quota(74)])).toEqual(["Quota 5 Hour <ok>███</><empty>░░░░░░░</> 26%"]);
+		expect(rows("beside", "none", [quota(75)])).toEqual(["Quota 5 Hour <warn>███</><empty>░░░░░░░</> 25%"]);
+		expect(rows("beside", "none", [quota(90)])).toEqual(["Quota 5 Hour <critical>█</><empty>░░░░░░░░░</> 10%"]);
+		expect(rows("beside", "none", [quota(100)])).toEqual(["Quota 5 Hour <empty>░░░░░░░░░░</> 0%"]);
+	});
+
+	test("overlay shades the remaining share of each window text", () => {
+		expect(rows("overlay", "none", [quota(31)])).toEqual(["<^ok>Quota 5 Hou</>r 69%"]);
+	});
+
+	test("below aligns bars under each window on a second row", () => {
+		expect(rows("below", "full", [quota(31), quota(75, "7d", "7 Day")])).toEqual([
+			"anthropic/acct Quota 5 Hour 69% · Quota 7 Day 25%",
+			"└" + "\u00a0".repeat(14) + "<ok>" + "█".repeat(11) + "</><empty>░░░░░</>" + "\u00a0".repeat(3) + "<warn>████</><empty>" + "░".repeat(11) + "</>",
+		]);
+	});
+
+	test("off leaves windows unbarred", () => {
+		expect(rows("off", "none", [quota(31)])).toEqual(["Quota 5 Hour 69%"]);
+	});
+});
+
+describe("text color", () => {
+	const now = new Date(2026, 9, 28, 12, 0).getTime();
+	const paint: UsageBarOptions["paint"] = (style, text) => `<${style}>${text}</>`;
+	const resetAt = now + 2.5 * 3_600_000 + 59_000;
+	const limits = [
+		limit("anthropic", "daily", "Quota", { unit: "percent", used: 95 }, { id: "5h", label: "5 Hour", resetsAt: resetAt }, "5h"),
+		limit("anthropic", "weekly", "Quota", { unit: "percent", used: 31 }, { id: "7d", label: "7 Day" }, "7d"),
+	];
+	const rows = (textColor: UsageTextColorMode) =>
+		formatUsageReports(
+			[report("anthropic", { accountId: "acct" }, limits)],
+			resolveUsedFraction,
+			sanitizeText,
+			{
+				...DEFAULT_DISPLAY,
+				label: "full",
+				resets: "countdown",
+				nowMs: now,
+				bar: { mode: "off", warn: 25, critical: 10, paint },
+				textColor,
+			},
+		);
+
+	test("colors pieces by mode using each window and the row's worst level", () => {
+		const expected: Record<UsageTextColorMode, string> = {
+			off: "anthropic/acct Quota 5 Hour 5% 2h30m · Quota 7 Day 69%",
+			percent: "anthropic/acct Quota 5 Hour <critical>5%</> 2h30m · Quota 7 Day <ok>69%</>",
+			window: "anthropic/acct <critical>Quota 5 Hour</> <critical>5%</> <critical>2h30m</> · <ok>Quota 7 Day</> <ok>69%</>",
+			split: "<critical>anthropic/acct</> <critical>Quota 5 Hour</> <critical>5%</> <critical>2h30m</> · <ok>Quota 7 Day</> <ok>69%</>",
+			row: "<critical>anthropic/acct</> <critical>Quota 5 Hour</> <critical>5%</> <critical>2h30m</><critical> · </><critical>Quota 7 Day</> <critical>69%</>",
+			parts: "<prefix>anthropic/acct</> Quota 5 Hour <critical>5%</> <reset>2h30m</> · Quota 7 Day <ok>69%</>",
+		};
+		for (const mode of Object.keys(expected) as UsageTextColorMode[]) expect(rows(mode)).toEqual([expected[mode]]);
+	});
+
+	test("beside keeps bar and window pieces in their own level colors", () => {
+		const single = formatUsageReports(
+			[report("anthropic", { accountId: "acct" }, [limit("anthropic", "daily", "Quota", { unit: "percent", used: 31 }, { id: "5h", label: "5 Hour" }, "5h")])],
+			resolveUsedFraction,
+			sanitizeText,
+			{
+				...DEFAULT_DISPLAY,
+				label: "none",
+				resets: "off",
+				bar: { mode: "beside", warn: 25, critical: 10, paint },
+				textColor: "window",
+			},
+		);
+		expect(single).toEqual(["<ok>Quota 5 Hour</> <ok>███████</><empty>░░░</> <ok>69%</>"]);
+	});
+
+	test("overlay colors the shaded head and window-mode tail separately", () => {
+		const single = formatUsageReports(
+			[report("anthropic", { accountId: "acct" }, [limit("anthropic", "daily", "Quota", { unit: "percent", used: 31 }, { id: "5h", label: "5 Hour" }, "5h")])],
+			resolveUsedFraction,
+			sanitizeText,
+			{
+				...DEFAULT_DISPLAY,
+				label: "none",
+				resets: "off",
+				bar: { mode: "overlay", warn: 25, critical: 10, paint },
+				textColor: "window",
+			},
+		);
+		expect(single).toEqual(["<ok>Quota 5 Hou</><ok>r 69%</>"]);
 	});
 });
