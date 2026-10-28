@@ -42,7 +42,7 @@ Le righe compaiono una volta sola. Alternativa senza collegamento: `omp --extens
 
 ## Uso
 
-Ogni riga ha la forma `<provider>/<account> <finestra> <residuo>% · …`, ordinata per provider, account e finestra. Le finestre senza dato risolvibile sono omesse.
+Con `label: full` (predefinito) ogni riga ha la forma `<provider>/<account> <finestra> <residuo>% · …`, ordinata per provider, account e finestra; le modalità `provider` e `none` accorciano il prefisso (vedi `Configurazione`). Le finestre senza dato risolvibile sono omesse.
 
 Messaggi di stato:
 
