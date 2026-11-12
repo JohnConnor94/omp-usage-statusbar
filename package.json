@@ -4,6 +4,9 @@
 	"description": "OMP extension that shows remaining subscription quota in the TUI footer",
 	"license": "MIT",
 	"author": "Ignazio Messina <ignazio.messina.994@gmail.com>",
+	"homepage": "https://github.com/JohnConnor94/omp-usage-statusbar#readme",
+	"repository": { "type": "git", "url": "git+https://github.com/JohnConnor94/omp-usage-statusbar.git" },
+	"bugs": { "url": "https://github.com/JohnConnor94/omp-usage-statusbar/issues" },
 	"keywords": ["omp", "oh-my-pi", "extension", "usage", "quota", "statusbar"],
 	"scripts": {
 		"test": "bun test",

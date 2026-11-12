@@ -28,14 +28,16 @@ The extension is visible only in the interactive TUI (not with `-p` or in RPC) a
 ## Installation
 
 ```sh
-git clone <repository-url> omp-usage-monitor
-cd omp-usage-monitor
+git clone https://github.com/JohnConnor94/omp-usage-statusbar.git
+cd omp-usage-statusbar
 bun install
 ```
 
 If `bun install` fails because of a private registry in `.npmrc`, use `bun install --registry=https://registry.npmjs.org`.
 
-Register the plugin (a symlink to the repository, enabled by default) and start OMP with no other arguments:
+Quick install without cloning: `omp plugin install github:JohnConnor94/omp-usage-statusbar`.
+
+Or register the plugin from the clone (a symlink to the repository, enabled by default) and start OMP with no other arguments:
 
 ```sh
 omp plugin link .
